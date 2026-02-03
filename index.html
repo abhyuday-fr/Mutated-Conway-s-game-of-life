@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mutated Conway's Game of Life</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: #111;
+    color: #eee;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 12px;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* ── top nav ── */
+  .nav {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .nav button {
+    padding: 8px 20px;
+    border: 2px solid #444;
+    border-radius: 6px;
+    background: #1e1e1e;
+    color: #aaa;
+    font-size: 15px;
+    cursor: pointer;
+    transition: all .2s;
+  }
+  .nav button.active {
+    border-color: #00e676;
+    color: #fff;
+    background: #1a3a1a;
+  }
+  .nav button:hover { border-color: #666; }
+
+  /* ── wrapper (ui bar + canvas stacked) ── */
+  .wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  /* ── mutating UI bar (hidden in classic mode) ── */
+  #mutateBar {
+    width: 750px;
+    background: rgba(0,0,0,.82);
+    border-radius: 8px 8px 0 0;
+    padding: 8px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    min-height: 52px;
+  }
+  #mutateBar .left  { display:flex; flex-direction:column; gap:2px; }
+  #mutateBar .right { display:flex; flex-direction:column; gap:2px; align-items:flex-end; }
+  .label-gen   { color:#fff;          font-weight:600; font-size:15px; }
+  .label-rules { color:#6f6;          font-weight:600; font-size:14px; }
+  .label-next  { color:#ffcc66;       font-size:13px; }
+  .label-every { color:#999;          font-size:12px; }
+  #mutateBar.hidden { display:none; }
+
+  /* ── canvas ── */
+  canvas {
+    display: block;
+    border-radius: 0 0 8px 8px;
+    border: 2px solid #2a2a2a;
+    border-top: none;
+    cursor: crosshair;
+  }
+  /* classic mode: top corners rounded */
+  canvas.classic-corners { border-radius: 8px; border-top: 2px solid #2a2a2a; }
+
+  /* ── control strip ── */
+  .controls {
+    margin-top: 18px;
+    width: 750px;
+    background: #1a1a1a;
+    border: 1px solid #2e2e2e;
+    border-radius: 8px;
+    padding: 14px 18px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 28px;
+  }
+  .controls .group { display:flex; flex-direction:column; gap:4px; }
+  .controls .group-title { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#555; margin-bottom:2px; }
+  .controls .row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 26px;
+    padding: 0 7px;
+    background: #252525;
+    border: 1px solid #3a3a3a;
+    border-bottom: 2px solid #444;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 13px;
+    color: #ccc;
+  }
+  .key-label { font-size:13px; color:#888; margin-right:4px; }
+
+  /* mutating-only keys shown/hidden */
+  .mut-only { transition: opacity .25s; }
+  .mut-only.hidden { opacity:.18; pointer-events:none; }
+
+  /* ── flash overlay when a mutation fires ── */
+  #flash {
+    position: fixed; inset:0;
+    background: rgba(255,153,0,.18);
+    pointer-events:none;
+    opacity:0;
+    transition: opacity .15s;
+    z-index: 10;
+  }
+  #flash.show { opacity:1; }
+</style>
+</head>
+<body>
+
+<!-- mode switcher -->
+<div class="nav">
+  <button id="btnClassic" class="active" onclick="switchMode('classic')">🟢 Classic Conway</button>
+  <button id="btnMutating"              onclick="switchMode('mutating')">🔀 Mutating Variant</button>
+</div>
+
+<!-- mutating info bar -->
+<div class="wrapper">
+  <div id="mutateBar" class="hidden">
+    <div class="left">
+      <span class="label-gen"  id="uiGen">Generation: 0</span>
+      <span class="label-rules" id="uiRules">Rules: B3/S23</span>
+    </div>
+    <div class="right">
+      <span class="label-next"  id="uiNext">Next mutation in: 50 gen</span>
+      <span class="label-every" id="uiEvery">Mutation every: 50 gen</span>
+    </div>
+  </div>
+
+  <canvas id="canvas" width="750" height="750"></canvas>
+</div>
+
+<!-- controls reference -->
+<div class="controls">
+  <div class="group">
+    <div class="group-title">Simulation</div>
+    <div class="row">
+      <span class="key">Enter</span><span class="key-label">Start</span>
+      <span class="key">Space</span><span class="key-label">Pause</span>
+    </div>
+  </div>
+  <div class="group">
+    <div class="group-title">Grid</div>
+    <div class="row">
+      <span class="key">R</span><span class="key-label">Random</span>
+      <span class="key">C</span><span class="key-label">Clear</span>
+      <span class="key-label" style="margin-left:6px">Click</span><span class="key-label">Toggle cell</span>
+    </div>
+  </div>
+  <div class="group">
+    <div class="group-title">Speed</div>
+    <div class="row">
+      <span class="key">F</span><span class="key-label">Faster</span>
+      <span class="key">S</span><span class="key-label">Slower</span>
+    </div>
+  </div>
+  <div class="group mut-only">
+    <div class="group-title">Mutation</div>
+    <div class="row">
+      <span class="key">M</span><span class="key-label">Mutate now</span>
+      <span class="key">T</span><span class="key-label">Reset rules</span>
+      <span class="key">+</span><span class="key">−</span><span class="key-label">Interval</span>
+    </div>
+  </div>
+</div>
+
+<!-- flash overlay -->
+<div id="flash"></div>
+
+<script>
+// ============================================================
+// CONSTANTS  — mirror the C++ source exactly
+// ============================================================
+const W = 750, H = 750, CELL = 25;
+const ROWS = H / CELL;            // 30
+const COLS = W / CELL;            // 30
+let   FPS  = 12;                  // starting FPS, same as C++
+
+// colours  (matches raylib Color{} values in grid.cpp)
+const ALIVE_COLOR  = '#00ff00';
+const DEAD_COLOR   = '#373737';   // rgb(55,55,55)
+const BG_COLOR     = '#1d1d1d';   // rgb(29,29,29)  ← ClearBackground(GREY)
+
+// mutation interval default  (simulation_mutating.hpp constructor)
+const DEFAULT_MUTATION_INTERVAL = 50;
+
+// ============================================================
+// STATE
+// ============================================================
+let mode = 'classic';   // 'classic' | 'mutating'
+let running = false;
+
+// grid: two flat Int8Arrays (current + temp), row-major
+let grid     = new Int8Array(ROWS * COLS);
+let tempGrid = new Int8Array(ROWS * COLS);
+
+// mutating-variant state
+let generationCount              = 0;
+let mutationInterval             = DEFAULT_MUTATION_INTERVAL;
+let generationsSinceLastMutation = 0;
+let currentRules = { birth: [3], survival: [2, 3] };   // B3/S23
+let ruleHistory  = [];
+
+// ============================================================
+// HELPERS
+// ============================================================
+function randInt(min, max) {                          // inclusive, same as raylib GetRandomValue
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+function idx(r, c) { return r * COLS + c; }
+
+// ============================================================
+// GRID  (grid.cpp)
+// ============================================================
+function gridGet(r, c) {
+  if (r >= 0 && r < ROWS && c >= 0 && c < COLS) return grid[idx(r, c)];
+  return 0;
+}
+function gridSet(r, c, v) {
+  if (r >= 0 && r < ROWS && c >= 0 && c < COLS) grid[idx(r, c)] = v;
+}
+function tempSet(r, c, v) {
+  if (r >= 0 && r < ROWS && c >= 0 && c < COLS) tempGrid[idx(r, c)] = v;
+}
+function fillRandom() {                               // FillRandom(): alive when randInt==4
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      grid[idx(r, c)] = randInt(0, 4) === 4 ? 1 : 0;
+}
+function clearGrid() {
+  grid.fill(0);
+}
+function toggleCell(r, c) {
+  if (r >= 0 && r < ROWS && c >= 0 && c < COLS)
+    grid[idx(r, c)] = grid[idx(r, c)] ? 0 : 1;
+}
+
+// ============================================================
+// SIMULATION — classic  (simulation.cpp)
+// ============================================================
+const NEIGHBOR_OFFSETS = [
+  [-1, 0], [1, 0], [0,-1], [0, 1],
+  [-1,-1],[-1, 1],[1,-1], [1, 1]
+];
+
+function countLiveNeighbors(row, col) {
+  let n = 0;
+  for (const [dr, dc] of NEIGHBOR_OFFSETS) {
+    const nr = (row + dr + ROWS) % ROWS;   // toroidal wrap
+    const nc = (col + dc + COLS) % COLS;
+    n += grid[idx(nr, nc)];
+  }
+  return n;
+}
+
+function updateClassic() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const n = countLiveNeighbors(r, c);
+      const alive = grid[idx(r, c)] === 1;
+      // exact branches from simulation.cpp Update()
+      if (alive) {
+        tempGrid[idx(r, c)] = (n > 3 || n < 2) ? 0 : 1;
+      } else {
+        tempGrid[idx(r, c)] = (n === 3) ? 1 : 0;
+      }
+    }
+  }
+  grid.set(tempGrid);
+}
+
+// ============================================================
+// SIMULATION — mutating  (simulation_mutating.cpp)
+// ============================================================
+function shouldCellLive(neighbors, isAlive) {
+  return isAlive
+    ? currentRules.survival.includes(neighbors)
+    : currentRules.birth.includes(neighbors);
+}
+
+function rulesString() {                              // LifeRules::ToString()
+  return 'B' + currentRules.birth.join('') + '/S' + currentRules.survival.join('');
+}
+
+function mutateRules() {                              // MutateRules() — every branch, every value
+  ruleHistory.push({ birth: [...currentRules.birth], survival: [...currentRules.survival] });
+
+  const mutationType = randInt(0, 9);
+
+  if (mutationType < 3) {
+    // ── survival mutation ──
+    if (randInt(0,1) === 0 && currentRules.survival.length > 1) {
+      const i = randInt(0, currentRules.survival.length - 1);
+      currentRules.survival.splice(i, 1);
+    } else {
+      const n = randInt(0, 8);
+      if (!currentRules.survival.includes(n)) {
+        currentRules.survival.push(n);
+        currentRules.survival.sort((a,b) => a - b);
+      }
+    }
+  }
+  else if (mutationType < 6) {
+    // ── birth mutation ──
+    if (randInt(0,1) === 0 && currentRules.birth.length > 1) {
+      const i = randInt(0, currentRules.birth.length - 1);
+      currentRules.birth.splice(i, 1);
+    } else {
+      const n = randInt(0, 8);
+      if (!currentRules.birth.includes(n)) {
+        currentRules.birth.push(n);
+        currentRules.birth.sort((a,b) => a - b);
+      }
+    }
+  }
+  else if (mutationType < 8) {
+    // ── count shift ±1 ──
+    const shift = randInt(0,1) === 0 ? -1 : 1;
+    currentRules.survival = currentRules.survival.map(v => Math.max(0, Math.min(8, v + shift)));
+    currentRules.birth    = currentRules.birth   .map(v => Math.max(0, Math.min(8, v + shift)));
+    // dedupe + sort  (mirrors std::unique after std::sort)
+    currentRules.survival = [...new Set(currentRules.survival)].sort((a,b) => a-b);
+    currentRules.birth    = [...new Set(currentRules.birth)]   .sort((a,b) => a-b);
+  }
+  else {
+    // ── full randomisation ──
+    currentRules.survival = [];
+    currentRules.birth    = [];
+    const numS = randInt(1, 4);
+    for (let i = 0; i < numS; i++) {
+      const v = randInt(0, 8);
+      if (!currentRules.survival.includes(v)) currentRules.survival.push(v);
+    }
+    const numB = randInt(1, 3);
+    for (let i = 0; i < numB; i++) {
+      const v = randInt(0, 8);
+      if (!currentRules.birth.includes(v)) currentRules.birth.push(v);
+    }
+    currentRules.survival.sort((a,b) => a-b);
+    currentRules.birth   .sort((a,b) => a-b);
+  }
+
+  // ── fallback: never leave a set empty  (lines 211-215) ──
+  if (currentRules.survival.length === 0) currentRules.survival.push(2);
+  if (currentRules.birth   .length === 0) currentRules.birth   .push(3);
+
+  // visual flash
+  triggerFlash();
+}
+
+function updateMutating() {
+  // auto-mutate check  (simulation_mutating.cpp Update())
+  if (generationsSinceLastMutation >= mutationInterval) {
+    mutateRules();
+    generationsSinceLastMutation = 0;
+  }
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const n     = countLiveNeighbors(r, c);
+      const alive = grid[idx(r, c)] === 1;
+      tempGrid[idx(r, c)] = shouldCellLive(n, alive) ? 1 : 0;
+    }
+  }
+  grid.set(tempGrid);
+  generationCount++;
+  generationsSinceLastMutation++;
+}
+
+function resetRules() {                               // ResetRules()
+  currentRules = { birth: [3], survival: [2, 3] };
+  ruleHistory  = [];
+  generationCount              = 0;
+  generationsSinceLastMutation = 0;
+}
+
+// ============================================================
+// RENDERING  (grid.cpp Draw)
+// ============================================================
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+
+function draw() {
+  ctx.fillStyle = BG_COLOR;
+  ctx.fillRect(0, 0, W, H);
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      ctx.fillStyle = grid[idx(r, c)] ? ALIVE_COLOR : DEAD_COLOR;
+      // DrawRectangle(col*cellSize, row*cellSize, cellSize-1, cellSize-1, color)
+      ctx.fillRect(c * CELL, r * CELL, CELL - 1, CELL - 1);
+    }
+  }
+}
+
+// ============================================================
+// UI updates  (DrawUI from simulation_mutating.cpp)
+// ============================================================
+function updateUI() {
+  if (mode === 'mutating') {
+    document.getElementById('uiGen')  .textContent = 'Generation: ' + generationCount;
+    document.getElementById('uiRules').textContent = 'Rules: ' + rulesString();
+    document.getElementById('uiNext') .textContent = 'Next mutation in: ' + (mutationInterval - generationsSinceLastMutation) + ' gen';
+    document.getElementById('uiEvery').textContent = 'Mutation every: ' + mutationInterval + ' gen';
+  }
+}
+
+// ============================================================
+// FLASH on mutation
+// ============================================================
+let flashTimeout = null;
+function triggerFlash() {
+  const el = document.getElementById('flash');
+  el.classList.add('show');
+  clearTimeout(flashTimeout);
+  flashTimeout = setTimeout(() => el.classList.remove('show'), 200);
+}
+
+// ============================================================
+// MODE SWITCHER
+// ============================================================
+function switchMode(m) {
+  mode = m;
+  running = false;
+
+  // nav buttons
+  document.getElementById('btnClassic') .classList.toggle('active', m === 'classic');
+  document.getElementById('btnMutating').classList.toggle('active', m === 'mutating');
+
+  // mutate bar visibility
+  document.getElementById('mutateBar').classList.toggle('hidden', m === 'classic');
+
+  // canvas border-radius
+  canvas.classList.toggle('classic-corners', m === 'classic');
+
+  // mutation keys dim/show
+  document.querySelectorAll('.mut-only').forEach(el =>
+    el.classList.toggle('hidden', m === 'classic'));
+
+  // reset shared state
+  clearGrid();
+  if (m === 'mutating') resetRules();
+  FPS = 12;
+  restartLoop();
+  draw();
+  updateUI();
+}
+
+// ============================================================
+// INPUT  (main.cpp / main_mutating.cpp event handling)
+// ============================================================
+canvas.addEventListener('mousedown', e => {
+  if (running) return;                                // ToggleCell guarded by !IsRunning()
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  const scaleY = H / rect.height;
+  const x = (e.clientX - rect.left) * scaleX;
+  const y = (e.clientY - rect.top)  * scaleY;
+  toggleCell(Math.floor(y / CELL), Math.floor(x / CELL));
+  draw();
+});
+
+// drag-paint  (IsMouseButtonDown in the C++ loop = continuous)
+let dragging = false;
+canvas.addEventListener('mousedown',  () => { dragging = true; });
+canvas.addEventListener('mouseup',    () => { dragging = false; });
+canvas.addEventListener('mouseleave', () => { dragging = false; });
+canvas.addEventListener('mousemove', e => {
+  if (!dragging || running) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (W / rect.width);
+  const y = (e.clientY - rect.top)  * (H / rect.height);
+  const r = Math.floor(y / CELL), c = Math.floor(x / CELL);
+  // only set alive while dragging (paint feel)
+  if (r >= 0 && r < ROWS && c >= 0 && c < COLS && grid[idx(r,c)] === 0) {
+    grid[idx(r, c)] = 1;
+    draw();
+  }
+});
+
+document.addEventListener('keydown', e => {
+  const key = e.key;
+
+  if (key === 'Enter')      { e.preventDefault(); running = true;  }
+  else if (key === ' ')     { e.preventDefault(); running = false; }
+  else if (key === 'r' || key === 'R') {
+    if (!running) { fillRandom(); draw(); }
+  }
+  else if (key === 'c' || key === 'C') {
+    if (!running) {
+      clearGrid();
+      if (mode === 'mutating') { generationCount = 0; generationsSinceLastMutation = 0; }
+      draw(); updateUI();
+    }
+  }
+  // speed  (main.cpp: IsKeyPressedRepeat — allow repeat here too)
+  else if (key === 'f' || key === 'F') {
+    FPS += 2; restartLoop();
+  }
+  else if (key === 's' || key === 'S') {
+    if (FPS > 5) { FPS -= 2; restartLoop(); }
+  }
+  // mutating-only keys
+  else if (key === 'm' || key === 'M') {
+    if (mode === 'mutating') { mutateRules(); updateUI(); }
+  }
+  else if (key === 't' || key === 'T') {
+    if (mode === 'mutating') { resetRules(); updateUI(); }
+  }
+  else if (key === '+' || key === '=' || key === 'NumpadAdd') {
+    if (mode === 'mutating') { mutationInterval += 10; updateUI(); }
+  }
+  else if (key === '-' || key === 'NumpadSubtract') {
+    if (mode === 'mutating' && mutationInterval - 10 >= 10) { mutationInterval -= 10; updateUI(); }
+  }
+});
+
+// ============================================================
+// GAME LOOP  (the while(WindowShouldClose()==false) equivalent)
+// ============================================================
+let loopId = null;
+function restartLoop() {
+  if (loopId !== null) clearInterval(loopId);
+  loopId = setInterval(tick, 1000 / FPS);
+}
+function tick() {
+  if (running) {
+    if (mode === 'classic')  updateClassic();
+    else                     updateMutating();
+  }
+  draw();
+  updateUI();
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+draw();
+restartLoop();
+</script>
+</body>
+</html>
