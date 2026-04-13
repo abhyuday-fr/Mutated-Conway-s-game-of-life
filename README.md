@@ -556,7 +556,7 @@ If you find this project interesting, give it a ⭐!
 
 <div align="center">
 
-### 🧬 Built with curiosity, powered by emergence
+### 🧬 Built with curiosity, powered by emergence, order in disroder
 
 **"Between rigid order and total chaos lies the sweet spot where interesting things happen."**
 
